@@ -115,7 +115,7 @@ namespace Leopotam.Ecs.RemoteDebug {
                             list.Add (_json.Serialize (_componentValuesCache[i]));
                         }
                         var res = new RemoteCmd {
-                            Type = RemoteCmdType.EntityDataResponsed,
+                            Type = RemoteCmdType.EntityDataResponded,
                             EntityId = cmd.EntityId,
                             EntityGen = cmd.EntityGen,
                             ComponentsData = list
@@ -211,7 +211,7 @@ namespace Leopotam.Ecs.RemoteDebug {
             EntityDestroyed,
             EntityChanged,
             EntityDataRequested,
-            EntityDataResponsed,
+            EntityDataResponded,
         }
 
         struct RemoteCmd {
