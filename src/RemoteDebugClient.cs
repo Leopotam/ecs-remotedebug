@@ -20,9 +20,9 @@ namespace Leopotam.Ecs.RemoteDebug {
         readonly JsonSerialization _json = new JsonSerialization ();
         readonly object _syncObj = new object ();
         readonly Queue<RemoteCmd> _outCmds = new Queue<RemoteCmd> (512);
-        readonly Queue<RemoteCmd> _inCmds = new Queue<RemoteCmd> (512);
         object[] _componentValuesCache = new object[16];
-        readonly StringBuilder _sb = new StringBuilder (512);
+        Type[] _componentTypesCache = new Type[16];
+        readonly Pool<List<string>> _stringsPool = new Pool<List<string>> (64);
 
         public bool IsConnected => _ws.State == WebSocketState.Open;
 
@@ -36,30 +36,49 @@ namespace Leopotam.Ecs.RemoteDebug {
         async void Connect () {
             try {
                 await _ws.ConnectAsync (_url, CancellationToken.None);
+#if UNITY_2019_1_OR_NEWER
+                if (IsConnected) {
+                    UnityEngine.Debug.LogWarning ($"[REMOTE-DEBUG] CONNECTED");
+                }
+#endif
                 await Task.WhenAll (Receive (_ws), Send (_ws));
             } catch {
                 // ignored
             } finally {
                 if (IsConnected) {
-                    await _ws.CloseAsync (WebSocketCloseStatus.NormalClosure, string.Empty, CancellationToken.None);
+                    try {
+                        await _ws.CloseAsync (WebSocketCloseStatus.NormalClosure, string.Empty, CancellationToken.None);
+                    } catch {
+                        // ignored
+                    }
                 }
-                UnityEngine.Debug.LogWarning ("STOPPED");
+#if UNITY_2019_1_OR_NEWER
+                UnityEngine.Debug.LogWarning ("[REMOTE-DEBUG] DISCONNECTED");
+#endif
             }
         }
 
         async Task Send (ClientWebSocket ws) {
             while (IsConnected) {
-                string cmd = null;
+                string cmdJson = null;
                 lock (_syncObj) {
                     if (_outCmds.Count > 0) {
-                        cmd = _json.Serialize (_outCmds.Dequeue ());
+                        var cmd = _outCmds.Dequeue ();
+                        cmdJson = _json.Serialize (cmd);
+                        if (cmd.ComponentsData != null) {
+                            cmd.ComponentsData.Clear ();
+                            _stringsPool.Recycle (cmd.ComponentsData);
+                        }
                     }
                 }
-                if (cmd != null) {
-                    var buffer = Encoding.UTF8.GetBytes (cmd);
+                if (cmdJson != null) {
+#if UNITY_2019_1_OR_NEWER
+                    UnityEngine.Debug.Log ($"[REMOTE-DEBUG] Send: {cmdJson}");
+#endif
+                    var buffer = Encoding.UTF8.GetBytes (cmdJson);
                     await ws.SendAsync (new ArraySegment<byte> (buffer), WebSocketMessageType.Text, true, CancellationToken.None);
                 } else {
-                    await Task.Delay (1);
+                    await Task.Yield ();
                 }
             }
         }
@@ -69,75 +88,84 @@ namespace Leopotam.Ecs.RemoteDebug {
             while (IsConnected) {
                 var result = await webSocket.ReceiveAsync (new ArraySegment<byte> (buffer), CancellationToken.None);
                 if (result.MessageType == WebSocketMessageType.Close) {
-                    await webSocket.CloseAsync (WebSocketCloseStatus.NormalClosure, string.Empty, CancellationToken.None);
+                    await webSocket.CloseAsync (WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
                     return;
                 }
                 if (!result.EndOfMessage) {
-                    throw new Exception ("Partial messages not supported");
+                    throw new Exception ("[REMOTE-DEBUG] Inbound partial messages not supported.");
                 }
-                var cmd = _json.Deserialize<RemoteCmd> (Encoding.UTF8.GetString (buffer, 0, result.Count));
                 lock (_syncObj) {
+                    var cmd = _json.Deserialize<RemoteCmd> (Encoding.UTF8.GetString (buffer, 0, result.Count));
                     // FIXME: send to _inCmds queue and process in main thread of world?
                     ProcessCmdRequest (cmd);
                 }
             }
         }
 
-        void ProcessCmdRequest (RemoteCmd cmd) {
-            switch (cmd.Cmd) {
-                case RemoteCmdType.RequestEntityData:
-                    if (cmd.Int1.HasValue && cmd.Int2.HasValue) {
-                        var entity = _world.RestoreEntityFromInternalId (cmd.Int1.Value, cmd.Int2.Value);
-                        if (entity.IsAlive ()) {
-                            var count = entity.GetComponentValues (ref _componentValuesCache);
-                            for (var i = 0; i < count; i++) {
-                                _sb.AppendLine (_json.Serialize (_componentValuesCache[i]));
-                            }
-                            var res = new RemoteCmd {
-                                Cmd = RemoteCmdType.RequestEntityData,
-                                Int1 = cmd.Int1,
-                                Int2 = cmd.Int2,
-                                Str1 = _sb.ToString ()
-                            };
-                            _sb.Length = 0;
-                            _outCmds.Enqueue (res);
+        void ProcessCmdRequest (in RemoteCmd cmd) {
+            switch (cmd.Type) {
+                case RemoteCmdType.EntityDataRequested:
+                    var entity = _world.RestoreEntityFromInternalId (cmd.EntityId, cmd.EntityGen);
+                    if (entity.IsAlive ()) {
+                        var count = entity.GetComponentTypes (ref _componentTypesCache);
+                        entity.GetComponentValues (ref _componentValuesCache);
+                        var list = _stringsPool.Get ();
+                        for (var i = 0; i < count; i++) {
+                            list.Add (_componentTypesCache[i].Name);
+                            list.Add (_json.Serialize (_componentValuesCache[i]));
                         }
+                        var res = new RemoteCmd {
+                            Type = RemoteCmdType.EntityDataResponsed,
+                            EntityId = cmd.EntityId,
+                            EntityGen = cmd.EntityGen,
+                            ComponentsData = list
+                        };
+                        _outCmds.Enqueue (res);
                     }
                     break;
             }
         }
 
         void IEcsWorldDebugListener.OnEntityCreated (EcsEntity entity) {
-            var cmd = new RemoteCmd { Cmd = RemoteCmdType.EntityCreated, Int1 = entity.GetInternalId () };
             lock (_syncObj) {
+                var cmd = new RemoteCmd {
+                    Type = RemoteCmdType.EntityCreated,
+                    EntityId = entity.GetInternalId (),
+                    EntityGen = entity.GetInternalGen ()
+                };
                 _outCmds.Enqueue (cmd);
             }
         }
 
         void IEcsWorldDebugListener.OnEntityDestroyed (EcsEntity entity) {
-            var cmd = new RemoteCmd { Cmd = RemoteCmdType.EntityRemoved, Int1 = entity.GetInternalId () };
             lock (_syncObj) {
+                var cmd = new RemoteCmd {
+                    Type = RemoteCmdType.EntityDestroyed,
+                    EntityId = entity.GetInternalId (),
+                    EntityGen = entity.GetInternalGen ()
+                };
                 _outCmds.Enqueue (cmd);
             }
         }
 
-        void IEcsWorldDebugListener.OnFilterCreated (EcsFilter filter) {
-            // FIXME: OnFilterCreated implementation.
-        }
+        void IEcsWorldDebugListener.OnFilterCreated (EcsFilter filter) { }
 
         void IEcsWorldDebugListener.OnComponentListChanged (EcsEntity entity) {
-            var cmd = new RemoteCmd { Cmd = RemoteCmdType.EntityChanged, Int1 = entity.GetInternalId () };
             lock (_syncObj) {
+                var cmd = new RemoteCmd {
+                    Type = RemoteCmdType.EntityChanged,
+                    EntityId = entity.GetInternalId (),
+                    EntityGen = entity.GetInternalGen ()
+                };
                 _outCmds.Enqueue (cmd);
             }
         }
 
         void IEcsWorldDebugListener.OnWorldDestroyed (EcsWorld world) {
             if (world == _world) {
-                _world.RemoveDebugListener (this);
                 lock (_syncObj) {
+                    _world.RemoveDebugListener (this);
                     _outCmds.Clear ();
-                    _inCmds.Clear ();
                     if (IsConnected) {
                         _ws.CloseAsync (WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
                     }
@@ -145,27 +173,57 @@ namespace Leopotam.Ecs.RemoteDebug {
             }
         }
 
-        void IEcsSystemsDebugListener.OnSystemsDestroyed (EcsSystems systems) {
-            // FIXME: OnFilterCreated implementation.
+        void IEcsSystemsDebugListener.OnSystemsDestroyed (EcsSystems systems) { }
+
+        /// <summary>
+        /// Pool for ref types.
+        /// </summary>
+        sealed class Pool<T> where T : new () {
+            T[] _items;
+            int _count;
+            readonly object _sync = new object ();
+
+            public Pool (int capacity) {
+                _items = new T[capacity];
+            }
+
+            public T Get () {
+                lock (_sync) {
+                    if (_count > 0) {
+                        return _items[--_count];
+                    }
+                }
+                return new T ();
+            }
+
+            public void Recycle (T item) {
+                lock (_sync) {
+                    if (_items.Length == _count) {
+                        Array.Resize (ref _items, _items.Length << 1);
+                    }
+                    _items[_count++] = item;
+                }
+            }
         }
 
         enum RemoteCmdType {
             EntityCreated,
-            EntityRemoved,
+            EntityDestroyed,
             EntityChanged,
-            RequestEntityData
+            EntityDataRequested,
+            EntityDataResponsed,
         }
 
         struct RemoteCmd {
-            [JsonName ("cmd")]
-            public RemoteCmdType Cmd;
-            [JsonName ("int1")]
-            public int? Int1;
-            [JsonName ("int2")]
-            public int? Int2;
-            [JsonName ("str1")]
+            [JsonName ("t")]
+            public RemoteCmdType Type;
+            [JsonName ("i")]
+            public int EntityId;
+            [JsonName ("g")]
+            public int EntityGen;
+            [JsonName ("c")]
             // ReSharper disable once NotAccessedField.Local
-            public string Str1;
+            public List<string> ComponentsData;
         }
     }
 }
