@@ -33,17 +33,25 @@ Integration can be processed with creation of `LeopotamGroup.Ecs.RemoteDebug` cl
 public class Startup : MonoBehaviour {
     EcsWorld _world;
     EcsSystems _systems;
+#if DEBUG
+    Leopotam.Ecs.RemoteDebug.RemoteDebugClient _debug;
+#endif
 
     void Start () {
         _world = new EcsWorld ();
         _systems = new EcsSystems(_world);
 #if DEBUG
-        new Leopotam.Ecs.RemoteDebug.RemoteDebugClient (_world);
+        _debug = new Leopotam.Ecs.RemoteDebug.RemoteDebugClient (_world);
 #endif  
         _systems.
             .Add (new RunSystem1());
             // Additional initialization here...
             .Init ();
+    }
+
+    void Update() {
+        _systems?.Run ();
+        _debug?.Run ();
     }
 }
 ```

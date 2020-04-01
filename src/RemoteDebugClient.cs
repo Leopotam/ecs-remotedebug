@@ -14,11 +14,14 @@ using System.Threading.Tasks;
 
 namespace Leopotam.Ecs.RemoteDebug {
     public sealed class RemoteDebugClient : IEcsWorldDebugListener, IEcsSystemsDebugListener {
+        const int MaxInboundCommands = 1000;
+
         readonly EcsWorld _world;
         readonly Uri _url;
         readonly ClientWebSocket _ws = new ClientWebSocket ();
         readonly JsonSerialization _json = new JsonSerialization ();
         readonly object _syncObj = new object ();
+        readonly Queue<RemoteCmd> _inCmds = new Queue<RemoteCmd> (512);
         readonly Queue<RemoteCmd> _outCmds = new Queue<RemoteCmd> (512);
         object[] _componentValuesCache = new object[16];
         Type[] _componentTypesCache = new Type[16];
@@ -33,21 +36,70 @@ namespace Leopotam.Ecs.RemoteDebug {
             Connect ();
         }
 
+        /// <summary>
+        /// Processes inbound commands. Should be called from EcsWorld thread. 
+        /// </summary>
+        public void Run () {
+            lock (_syncObj) {
+                while (_inCmds.Count > 0) {
+                    var cmd = _inCmds.Dequeue ();
+                    ProcessRequest (cmd);
+                }
+            }
+        }
+
+        void ProcessRequest (in RemoteCmd cmd) {
+#if UNITY_2019_1_OR_NEWER
+            // UnityEngine.Debug.Log ($"[IN] {_json.Serialize (cmd)}");
+#endif
+            switch (cmd.Type) {
+                case RemoteCmdType.HeartBeat:
+                    _outCmds.Enqueue (new RemoteCmd { Type = RemoteCmdType.HeartBeat });
+                    break;
+                case RemoteCmdType.EntityDataRequested:
+                    var entity = _world.RestoreEntityFromInternalId (cmd.EntityId, cmd.EntityGen);
+                    if (entity.IsAlive ()) {
+                        var count = entity.GetComponentTypes (ref _componentTypesCache);
+                        entity.GetComponentValues (ref _componentValuesCache);
+                        var list = _stringsPool.Get ();
+                        for (var i = 0; i < count; i++) {
+                            list.Add (_componentTypesCache[i].Name);
+                            list.Add (_json.Serialize (_componentValuesCache[i]));
+                        }
+                        var res = new RemoteCmd {
+                            Type = RemoteCmdType.EntityDataResponded,
+                            EntityId = cmd.EntityId,
+                            EntityGen = cmd.EntityGen,
+                            ComponentsData = list
+                        };
+                        _outCmds.Enqueue (res);
+                    }
+                    break;
+            }
+        }
+
         async void Connect () {
             try {
                 await _ws.ConnectAsync (_url, CancellationToken.None);
 #if UNITY_2019_1_OR_NEWER
                 if (IsConnected) {
-                    UnityEngine.Debug.LogWarning ($"[REMOTE-DEBUG] CONNECTED");
+                    UnityEngine.Debug.LogWarning ("[REMOTE-DEBUG] CONNECTED");
                 }
 #endif
-                await Task.WhenAll (Receive (_ws), Send (_ws));
+                var sndTask = Send (_ws);
+                var rcvTask = Receive (_ws);
+                await Task.WhenAny (sndTask, rcvTask);
+#if UNITY_2019_1_OR_NEWER
+                if (rcvTask.Exception != null) {
+                    UnityEngine.Debug.LogWarning (rcvTask.Exception.InnerException?.ToString ());
+                }
+#endif
             } catch {
                 // ignored
             } finally {
                 if (IsConnected) {
                     try {
-                        await _ws.CloseAsync (WebSocketCloseStatus.NormalClosure, string.Empty, CancellationToken.None);
+                        await _ws.CloseAsync (WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
                     } catch {
                         // ignored
                     }
@@ -73,7 +125,7 @@ namespace Leopotam.Ecs.RemoteDebug {
                 }
                 if (cmdJson != null) {
 #if UNITY_2019_1_OR_NEWER
-                    UnityEngine.Debug.Log ($"[REMOTE-DEBUG] Send: {cmdJson}");
+                    // UnityEngine.Debug.Log ($"[REMOTE-DEBUG] Send: {cmdJson}");
 #endif
                     var buffer = Encoding.UTF8.GetBytes (cmdJson);
                     await ws.SendAsync (new ArraySegment<byte> (buffer), WebSocketMessageType.Text, true, CancellationToken.None);
@@ -94,35 +146,12 @@ namespace Leopotam.Ecs.RemoteDebug {
                 if (!result.EndOfMessage) {
                     throw new Exception ("[REMOTE-DEBUG] Inbound partial messages not supported.");
                 }
+                var json = Encoding.UTF8.GetString (buffer, 0, result.Count);
+                var cmd = _json.Deserialize<RemoteCmd> (json);
                 lock (_syncObj) {
-                    var cmd = _json.Deserialize<RemoteCmd> (Encoding.UTF8.GetString (buffer, 0, result.Count));
-                    // FIXME: send to _inCmds queue and process in main thread of world?
-                    ProcessCmdRequest (cmd);
+                    if (_inCmds.Count > MaxInboundCommands) { throw new Exception ("[REMOTE-DEBUG] Too many non-processed inbound commands."); }
+                    _inCmds.Enqueue (cmd);
                 }
-            }
-        }
-
-        void ProcessCmdRequest (in RemoteCmd cmd) {
-            switch (cmd.Type) {
-                case RemoteCmdType.EntityDataRequested:
-                    var entity = _world.RestoreEntityFromInternalId (cmd.EntityId, cmd.EntityGen);
-                    if (entity.IsAlive ()) {
-                        var count = entity.GetComponentTypes (ref _componentTypesCache);
-                        entity.GetComponentValues (ref _componentValuesCache);
-                        var list = _stringsPool.Get ();
-                        for (var i = 0; i < count; i++) {
-                            list.Add (_componentTypesCache[i].Name);
-                            list.Add (_json.Serialize (_componentValuesCache[i]));
-                        }
-                        var res = new RemoteCmd {
-                            Type = RemoteCmdType.EntityDataResponded,
-                            EntityId = cmd.EntityId,
-                            EntityGen = cmd.EntityGen,
-                            ComponentsData = list
-                        };
-                        _outCmds.Enqueue (res);
-                    }
-                    break;
             }
         }
 
@@ -165,6 +194,7 @@ namespace Leopotam.Ecs.RemoteDebug {
             if (world == _world) {
                 lock (_syncObj) {
                     _world.RemoveDebugListener (this);
+                    _inCmds.Clear ();
                     _outCmds.Clear ();
                     if (IsConnected) {
                         _ws.CloseAsync (WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
@@ -207,6 +237,7 @@ namespace Leopotam.Ecs.RemoteDebug {
         }
 
         enum RemoteCmdType {
+            HeartBeat,
             EntityCreated,
             EntityDestroyed,
             EntityChanged,
