@@ -11,6 +11,8 @@
 
 > Dependent on [ECS framework](https://github.com/Leopotam/ecs) - ECS framework should be imported to unity project first.
 
+> **Important!** It's connection (client) part only, external (server) viewer app you can [find here](https://github.com/snatvb/leo-ecs-remote-debugger).
+
 # Installation
 
 ## As unity module
@@ -51,7 +53,9 @@ public class Startup : MonoBehaviour {
 
     void Update() {
         _systems?.Run ();
+#if DEBUG
         _debug?.Run ();
+#endif
     }
 }
 ```

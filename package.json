@@ -4,7 +4,7 @@
     "displayName": "LeoECS RemoteDebug",
     "description": "LeoECS RemoteDebug connector for LeoECS Entity Component System framework.",
     "unity": "2019.1",
-    "version": "2020.3.22-preview",
+    "version": "2020.5.22-preview",
     "keywords": [
         "leoecs",
         "ecs",
