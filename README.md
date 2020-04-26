@@ -62,6 +62,24 @@ public class Startup : MonoBehaviour {
 
 `RemoteDebugClient` instance **must** be created before any entity will be created in ecs-world.
 
+# Custom connection
+By default client uses `localhost` with `1111` port as external server app, you can change this behaviour:
+```csharp
+    void Start () {
+        _world = new EcsWorld ();
+        _systems = new EcsSystems(_world);
+#if DEBUG
+        var newPort = 1234;
+        var newHost = "my.customserver.com";
+        _debug = new Leopotam.Ecs.RemoteDebug.RemoteDebugClient (_world, newPort, newHost);
+#endif  
+        _systems.
+            .Add (new RunSystem1());
+            // Additional initialization here...
+            .Init ();
+    }
+```
+
 # License
 The software released under the terms of the [MIT license](./LICENSE.md). Enjoy.
 
