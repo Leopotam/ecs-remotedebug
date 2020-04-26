@@ -22,7 +22,7 @@ This repository can be installed as unity module directly from git url. In this 
 ```
 By default last released version will be used. If you need trunk / developing version then `develop` name of branch should be added after hash:
 ```
-"com.leopotam.ecs-unityintegration": "https://github.com/Leopotam/ecs-remotedebug.git#develop",
+"com.leopotam.ecs-remotedebug": "https://github.com/Leopotam/ecs-remotedebug.git#develop",
 ```
 
 ## As source
