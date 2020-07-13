@@ -1,5 +1,5 @@
 {
-    "name": "com.leopotam.ecs.remotedebug",
+    "name": "com.leopotam.ecs-remotedebug",
     "author": "Leopotam",
     "displayName": "LeoECS RemoteDebug",
     "description": "LeoECS RemoteDebug connector for LeoECS Entity Component System framework.",
