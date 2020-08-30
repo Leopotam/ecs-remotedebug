@@ -13,6 +13,7 @@ using System.Threading;
 using System.Threading.Tasks;
 
 namespace Leopotam.Ecs.RemoteDebug {
+#if  DEBUG
     public sealed class RemoteDebugClient : IEcsWorldDebugListener, IEcsSystemsDebugListener {
         const int MaxInboundCommands = 1000;
 
@@ -257,4 +258,5 @@ namespace Leopotam.Ecs.RemoteDebug {
             public List<string> ComponentsData;
         }
     }
+#endif
 }
