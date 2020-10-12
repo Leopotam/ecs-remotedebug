@@ -4,7 +4,7 @@
 // for ECS framework https://github.com/Leopotam/ecs
 // Copyright (c) 2017-2020 Leopotam <leopotam@gmail.com>
 // ----------------------------------------------------------------------------
-
+#if DEBUG
 using System;
 using System.Collections.Generic;
 using System.Net.WebSockets;
@@ -13,7 +13,6 @@ using System.Threading;
 using System.Threading.Tasks;
 
 namespace Leopotam.Ecs.RemoteDebug {
-#if  DEBUG
     public sealed class RemoteDebugClient : IEcsWorldDebugListener, IEcsSystemsDebugListener {
         const int MaxInboundCommands = 1000;
 
