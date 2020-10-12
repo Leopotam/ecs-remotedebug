@@ -257,5 +257,5 @@ namespace Leopotam.Ecs.RemoteDebug {
             public List<string> ComponentsData;
         }
     }
-#endif
 }
+#endif
