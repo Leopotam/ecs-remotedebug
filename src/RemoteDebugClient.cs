@@ -4,7 +4,7 @@
 // for ECS framework https://github.com/Leopotam/ecs
 // Copyright (c) 2017-2020 Leopotam <leopotam@gmail.com>
 // ----------------------------------------------------------------------------
-
+#if DEBUG
 using System;
 using System.Collections.Generic;
 using System.Net.WebSockets;
@@ -258,3 +258,4 @@ namespace Leopotam.Ecs.RemoteDebug {
         }
     }
 }
+#endif

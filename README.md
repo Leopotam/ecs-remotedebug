@@ -9,7 +9,7 @@
 
 > Tested on unity 2019.1 (not dependent on it) and contains assembly definition for compiling to separate assembly file for performance reason.
 
-> Dependent on [ECS framework](https://github.com/Leopotam/ecs) - ECS framework should be imported to unity project first.
+> Dependent on [ECS framework](https://github.com/Leopotam/ecs) - ECS framework should be imported to the solution/unity project first.
 
 > **Important!** It's connection (client) part only, external (server) viewer app you can [find here](https://github.com/snatvb/leo-ecs-remote-debugger).
 
@@ -27,6 +27,9 @@ By default last released version will be used. If you need trunk / developing ve
 
 ## As source
 If you can't / don't want to use unity modules, code can be downloaded as sources archive of required release from [Releases page](`https://github.com/Leopotam/ecs-remotedebug/releases`).
+
+## As c# project
+`Leopotam.Ecs.RemoteDebug.csproj` can be used as plain c# project after adding reference to [LeoECS](https://github.com/Leopotam/ecs) `.csproj` file into
 
 # Integration
 
